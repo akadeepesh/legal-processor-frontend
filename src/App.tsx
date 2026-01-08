@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Scale, FileText, Zap, Upload, CheckCircle, Clock, Download, AlertCircle, Loader } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL;
@@ -38,6 +38,7 @@ const App: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [processedResults, setProcessedResults] = useState<ProcessingResult[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
@@ -53,6 +54,11 @@ const App: React.FC = () => {
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
+  };
+
+  // Fix #1: Handle click on entire upload area
+  const handleUploadAreaClick = () => {
+    fileInputRef.current?.click();
   };
 
   const handleUpload = async () => {
@@ -109,8 +115,14 @@ const App: React.FC = () => {
       }
     }
 
+    // Fix #2: Clear files state after upload
     setFiles([]);
     setUploading(false);
+
+    // Reset file input to allow re-selection of same files
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const checkForResults = async () => {
@@ -139,18 +151,18 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-  if (uploadedFiles.length > 0) {
-    const hasProcessing = uploadedFiles.some(f =>
-      f.status === 'uploaded' || f.status === 'processing' || f.status === 'uploading'
-    );
+    if (uploadedFiles.length > 0) {
+      const hasProcessing = uploadedFiles.some(f =>
+        f.status === 'uploaded' || f.status === 'processing' || f.status === 'uploading'
+      );
 
-    if (!hasProcessing) return; // Stop polling if all done
+      if (!hasProcessing) return;
 
-    const interval = setInterval(checkForResults, 10000);
-    checkForResults();
-    return () => clearInterval(interval);
-  }
-}, [uploadedFiles]);
+      const interval = setInterval(checkForResults, 10000);
+      checkForResults();
+      return () => clearInterval(interval);
+    }
+  }, [uploadedFiles, processedResults]);
 
   const getStatusIcon = (status: UploadedFile['status']) => {
     if (status === 'completed') return <CheckCircle className="w-5 h-5 text-emerald-600" />;
@@ -193,9 +205,11 @@ const App: React.FC = () => {
                 className="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center hover:border-blue-400 transition cursor-pointer"
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
+                onClick={handleUploadAreaClick}
               >
                 <Upload className="w-12 h-12 text-slate-400 mx-auto mb-4" />
                 <input
+                  ref={fileInputRef}
                   type="file"
                   multiple
                   accept=".pdf"
@@ -203,9 +217,9 @@ const App: React.FC = () => {
                   className="hidden"
                   id="file-upload"
                 />
-                <label htmlFor="file-upload" className="cursor-pointer text-blue-600 font-medium hover:text-blue-700">
+                <p className="text-blue-600 font-medium hover:text-blue-700">
                   Choose PDF files
-                </label>
+                </p>
                 <p className="text-slate-500 text-sm mt-2">or drag and drop</p>
               </div>
 
