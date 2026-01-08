@@ -140,13 +140,26 @@ const App: React.FC = () => {
         })
       );
 
-      statusData.files.forEach((fileStatus: any) => {
-        if (fileStatus.status === 'completed' && !processedResults.find(r => r.original_file === fileStatus.original_file)) {
-          setProcessedResults(prev => [...prev, fileStatus]);
-        }
-      });
+      // Get only completed files from server
+      const completedFiles = statusData.files.filter((f: any) => f.status === 'completed');
+      setProcessedResults(completedFiles);
     } catch (error) {
       console.error('Error checking results:', error);
+    }
+  };
+
+  const clearCompletedDocuments = async () => {
+    try {
+      const response = await fetch(`${API_URL}/clear-completed`, {
+        method: 'POST',
+      });
+      if (response.ok) {
+        setProcessedResults([]);
+        alert('Completed documents cleared successfully!');
+      }
+    } catch (error) {
+      console.error('Error clearing completed documents:', error);
+      alert('Failed to clear completed documents');
     }
   };
 
@@ -158,11 +171,11 @@ const App: React.FC = () => {
 
       if (!hasProcessing) return;
 
-      const interval = setInterval(checkForResults, 10000);
+      const interval = setInterval(checkForResults, 5000); // Check every 5 seconds
       checkForResults();
       return () => clearInterval(interval);
     }
-  }, [uploadedFiles, processedResults]);
+  }, [uploadedFiles.length]); // Only depend on length to avoid infinite loops
 
   const getStatusIcon = (status: UploadedFile['status']) => {
     if (status === 'completed') return <CheckCircle className="w-5 h-5 text-emerald-600" />;
@@ -303,7 +316,15 @@ const App: React.FC = () => {
 
             {processedResults.length > 0 && (
               <div className="bg-white rounded-2xl shadow-lg p-8">
-                <h2 className="text-xl font-semibold text-slate-900 mb-6">Completed Documents</h2>
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-xl font-semibold text-slate-900">Completed Documents</h2>
+                  <button
+                    onClick={clearCompletedDocuments}
+                    className="px-4 py-2 text-sm bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition"
+                  >
+                    Clear All
+                  </button>
+                </div>
                 <div className="space-y-4">
                   {processedResults.map((result, idx) => (
                     <div key={idx} className="p-5 bg-gradient-to-r from-emerald-50 to-green-50 rounded-lg border border-emerald-200">
