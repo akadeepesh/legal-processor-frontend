@@ -112,6 +112,8 @@ const App: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [processedResults, setProcessedResults] = useState<ProcessingResult[]>([]);
+  const [showModal, setShowModal] = useState(false);
+  const [modalData, setModalData] = useState<{filename: string; existing_files: Array<{name: string; url: string}>} | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -136,7 +138,6 @@ const App: React.FC = () => {
 
   const handleUpload = async () => {
     setUploading(true);
-    const uploaded: UploadedFile[] = [];
 
     for (const file of files) {
       const tempFile: UploadedFile = {
@@ -161,14 +162,22 @@ const App: React.FC = () => {
 
         const result = await response.json();
 
+        if (result.already_processed) {
+          setUploadedFiles(prev => prev.filter(f => f.id !== tempFile.id));
+          setModalData({
+            filename: result.filename,
+            existing_files: result.existing_files
+          });
+          setShowModal(true);
+          continue;
+        }
+
         const completedFile: UploadedFile = {
           name: file.name,
           id: result.file_id,
           status: 'uploaded',
           uploadTime: new Date().toISOString()
         };
-
-        uploaded.push(completedFile);
 
         setUploadedFiles(prev =>
           prev.map(f => f.id === tempFile.id ? completedFile : f)
@@ -194,6 +203,41 @@ const App: React.FC = () => {
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+  };
+
+  const handleReprocess = async () => {
+    if (!modalData) return;
+
+    setShowModal(false);
+    setUploading(true);
+
+    try {
+      const response = await fetch(`${API_URL}/reprocess`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ filename: modalData.filename })
+      });
+
+      if (!response.ok) throw new Error('Reprocess failed');
+
+      const result = await response.json();
+
+      const newFile: UploadedFile = {
+        name: result.filename,
+        id: result.file_id,
+        status: 'uploaded',
+        uploadTime: new Date().toISOString()
+      };
+
+      setUploadedFiles(prev => [...prev, newFile]);
+    } catch (error) {
+      alert('Failed to reprocess file: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
+
+    setUploading(false);
+    setModalData(null);
   };
 
   const checkForResults = async () => {
@@ -466,6 +510,62 @@ const App: React.FC = () => {
       <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-center text-sm text-slate-500">
         <p>Files are processed securely and stored for 24 hours before automatic deletion</p>
       </footer>
+
+      {showModal && modalData && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-8">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold text-slate-900">File Already Processed</h3>
+              <button
+                onClick={() => { setShowModal(false); setModalData(null); }}
+                className="text-slate-400 hover:text-slate-600 transition"
+              >
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="mb-6">
+              <p className="text-slate-700 mb-4">
+                <strong>{modalData.filename}</strong> has already been processed.
+                You can download the existing files or reprocess the document.
+              </p>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <p className="text-sm font-medium text-blue-900 mb-3">Existing Files:</p>
+                <div className="space-y-2">
+                  {modalData.existing_files.map((file, idx) => (
+                    <a
+                      key={idx}
+                      href={file.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between p-3 bg-white rounded-lg hover:bg-blue-50 transition border border-blue-200"
+                    >
+                      <span className="text-sm font-medium text-slate-900">{file.name}</span>
+                      <Download className="w-4 h-4 text-blue-600" />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex space-x-3">
+              <button
+                onClick={() => { setShowModal(false); setModalData(null); }}
+                className="flex-1 px-4 py-3 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition font-medium"
+              >
+                Close
+              </button>
+              <button
+                onClick={handleReprocess}
+                className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium"
+              >
+                Reprocess File
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
