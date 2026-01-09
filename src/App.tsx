@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Scale, FileText, Zap, Upload, CheckCircle, Clock, Download, AlertCircle, Loader } from 'lucide-react';
+import { Scale, FileText, Zap, Upload, CheckCircle, Clock, Download, Loader, XCircle, Cloud, Database } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL;
+
+interface ProgressStep {
+  step: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  message: string;
+  error: string;
+  updated_at: string;
+}
 
 interface UploadedFile {
   name: string;
@@ -9,6 +17,7 @@ interface UploadedFile {
   status: 'uploading' | 'uploaded' | 'processing' | 'completed' | 'failed';
   uploadTime: string;
   error?: string;
+  progress?: ProgressStep[];
 }
 
 interface ProcessingResult {
@@ -28,10 +37,75 @@ interface ProcessingResult {
     uploaded: boolean;
     urls: string[];
   };
+  azure_blob?: {
+    uploaded: boolean;
+    urls: Array<{ name: string; url: string }>;
+  };
   docx_files?: string[];
   status: 'completed' | 'failed';
   error?: string;
 }
+
+// CORRECTED ORDER: Azure upload is FIRST (happens in /upload endpoint)
+const PROCESSING_STEPS = [
+  { key: 'azure_upload', label: 'Azure Upload (Original PDF)', icon: Cloud },
+  { key: 'initialization', label: 'Initialization', icon: Zap },
+  { key: 'extraction', label: 'Text Extraction', icon: FileText },
+  { key: 'ai_conversion', label: 'AI Conversion (30min-2hrs)', icon: Zap },
+  { key: 'docx_creation', label: 'DOCX Creation', icon: FileText },
+  { key: 'azure_docx_upload', label: 'Azure Upload (DOCX)', icon: Cloud },
+  { key: 'sharepoint_upload', label: 'SharePoint Upload', icon: Database },
+  { key: 'wordpress_upload', label: 'WordPress Upload', icon: Upload },
+];
+
+const StepIndicator: React.FC<{ step: ProgressStep | undefined; stepInfo: typeof PROCESSING_STEPS[0] }> = ({ step, stepInfo }) => {
+  const Icon = stepInfo.icon;
+
+  const getStepColor = () => {
+    if (!step) return 'bg-gray-200 text-gray-400';
+    if (step.status === 'completed') return 'bg-emerald-500 text-white';
+    if (step.status === 'in_progress') return 'bg-blue-500 text-white animate-pulse';
+    if (step.status === 'failed') return 'bg-red-500 text-white';
+    return 'bg-gray-200 text-gray-400';
+  };
+
+  const getStatusIcon = () => {
+    if (!step) return <Clock className="w-4 h-4" />;
+    if (step.status === 'completed') return <CheckCircle className="w-4 h-4" />;
+    if (step.status === 'in_progress') return <Loader className="w-4 h-4 animate-spin" />;
+    if (step.status === 'failed') return <XCircle className="w-4 h-4" />;
+    if (step.status === 'pending') return <Clock className="w-4 h-4" />;
+    return <Icon className="w-4 h-4" />;
+  };
+
+  return (
+    <div className="flex items-start space-x-3">
+      <div className={`flex items-center justify-center w-8 h-8 rounded-full flex-shrink-0 transition-all duration-300 ${getStepColor()}`}>
+        {getStatusIcon()}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-medium text-slate-700">{stepInfo.label}</p>
+          {step?.status === 'in_progress' && (
+            <span className="text-xs text-blue-600 font-medium animate-pulse">Processing...</span>
+          )}
+          {step?.status === 'completed' && (
+            <span className="text-xs text-emerald-600 font-medium">✓ Done</span>
+          )}
+          {step?.status === 'failed' && (
+            <span className="text-xs text-red-600 font-medium">✗ Failed</span>
+          )}
+        </div>
+        {step?.message && (
+          <p className="text-xs text-slate-500 mt-1">{step.message}</p>
+        )}
+        {step?.error && (
+          <p className="text-xs text-red-600 mt-1 font-medium">Error: {step.error}</p>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const App: React.FC = () => {
   const [files, setFiles] = useState<File[]>([]);
@@ -56,7 +130,6 @@ const App: React.FC = () => {
     e.preventDefault();
   };
 
-  // Fix #1: Handle click on entire upload area
   const handleUploadAreaClick = () => {
     fileInputRef.current?.click();
   };
@@ -115,11 +188,9 @@ const App: React.FC = () => {
       }
     }
 
-    // Fix #2: Clear files state after upload
     setFiles([]);
     setUploading(false);
 
-    // Reset file input to allow re-selection of same files
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -132,15 +203,23 @@ const App: React.FC = () => {
 
       const statusData = await response.json();
 
+      // Update all files with their progress
       setUploadedFiles(prev =>
         prev.map(f => {
-          const update = statusData.files.find((s: any) => s.original_file === f.name);
-          if (update) return { ...f, status: update.status };
+          const update = statusData.files.find((s: any) => s.id === f.id || s.original_file === f.name);
+          if (update) {
+            return {
+              ...f,
+              id: update.id,
+              status: update.status,
+              progress: update.progress || []
+            };
+          }
           return f;
         })
       );
 
-      // Get only completed files from server
+      // Get completed files
       const completedFiles = statusData.files.filter((f: any) => f.status === 'completed');
       setProcessedResults(completedFiles);
     } catch (error) {
@@ -155,6 +234,7 @@ const App: React.FC = () => {
       });
       if (response.ok) {
         setProcessedResults([]);
+        setUploadedFiles(prev => prev.filter(f => f.status !== 'completed'));
         alert('Completed documents cleared successfully!');
       }
     } catch (error) {
@@ -171,27 +251,11 @@ const App: React.FC = () => {
 
       if (!hasProcessing) return;
 
-      const interval = setInterval(checkForResults, 5000); // Check every 5 seconds
+      const interval = setInterval(checkForResults, 3000); // Check every 3 seconds
       checkForResults();
       return () => clearInterval(interval);
     }
-  }, [uploadedFiles.length]); // Only depend on length to avoid infinite loops
-
-  const getStatusIcon = (status: UploadedFile['status']) => {
-    if (status === 'completed') return <CheckCircle className="w-5 h-5 text-emerald-600" />;
-    if (status === 'failed') return <AlertCircle className="w-5 h-5 text-red-600" />;
-    if (status === 'processing') return <Loader className="w-5 h-5 text-amber-500 animate-spin" />;
-    if (status === 'uploading') return <Loader className="w-5 h-5 text-blue-500 animate-spin" />;
-    return <Clock className="w-5 h-5 text-blue-500" />;
-  };
-
-  const getStatusText = (status: UploadedFile['status']) => {
-    if (status === 'uploading') return 'Uploading...';
-    if (status === 'uploaded') return 'Uploaded - waiting for processing';
-    if (status === 'processing') return 'Processing with AI...';
-    if (status === 'completed') return 'Completed';
-    return 'Upload failed';
-  };
+  }, [uploadedFiles.length]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
@@ -294,20 +358,43 @@ const App: React.FC = () => {
           </div>
 
           <div className="space-y-8">
-            {uploadedFiles.length > 0 && (
+            {uploadedFiles.filter(f => f.status !== 'completed').length > 0 && (
               <div className="bg-white rounded-2xl shadow-lg p-8">
-                <h2 className="text-xl font-semibold text-slate-900 mb-6">Upload Status</h2>
-                <div className="space-y-3">
-                  {uploadedFiles.map((file, idx) => (
-                    <div key={idx} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
-                      <div className="flex items-center space-x-3 flex-1 min-w-0">
-                        {getStatusIcon(file.status)}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-slate-700 truncate">{file.name}</p>
-                          <p className="text-xs text-slate-500">{getStatusText(file.status)}</p>
-                          {file.error && <p className="text-xs text-red-600 mt-1">{file.error}</p>}
-                        </div>
+                <h2 className="text-xl font-semibold text-slate-900 mb-6">Processing Status</h2>
+                <div className="space-y-6">
+                  {uploadedFiles.filter(f => f.status !== 'completed').map((file, idx) => (
+                    <div key={idx} className="border-2 border-slate-200 rounded-lg p-5 bg-slate-50">
+                      <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-200">
+                        <h3 className="text-sm font-semibold text-slate-900 truncate flex-1">{file.name}</h3>
+                        {file.status === 'processing' && (
+                          <span className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-full ml-2 font-medium">Processing</span>
+                        )}
+                        {file.status === 'uploaded' && (
+                          <span className="text-xs bg-green-100 text-green-700 px-3 py-1 rounded-full ml-2 font-medium">Queued</span>
+                        )}
+                        {file.status === 'failed' && (
+                          <span className="text-xs bg-red-100 text-red-700 px-3 py-1 rounded-full ml-2 font-medium">Failed</span>
+                        )}
                       </div>
+
+                      <div className="space-y-3">
+                        {PROCESSING_STEPS.map((stepInfo) => {
+                          const stepData = file.progress?.find(p => p.step === stepInfo.key);
+                          return (
+                            <StepIndicator
+                              key={stepInfo.key}
+                              step={stepData}
+                              stepInfo={stepInfo}
+                            />
+                          );
+                        })}
+                      </div>
+
+                      {file.error && (
+                        <div className="mt-4 p-3 bg-red-50 rounded-lg border border-red-200">
+                          <p className="text-xs text-red-700 font-medium">{file.error}</p>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -338,20 +425,24 @@ const App: React.FC = () => {
                         <div className="text-slate-600"><span className="font-medium">Chunks:</span> {result.successful_chunks}/{result.total_chunks}</div>
                         <div className="text-slate-600"><span className="font-medium">Cost:</span> {result.cost}</div>
                       </div>
-                      {result.wordpress?.urls && result.wordpress.urls.length > 0 && (
+                      {result.azure_blob?.urls && result.azure_blob.urls.length > 0 && (
                         <div className="mt-3 pt-3 border-t border-emerald-200">
                           <p className="text-xs font-medium text-slate-700 mb-2">Download Files:</p>
                           <div className="flex flex-wrap gap-2">
-                            {result.wordpress.urls.map((url, urlIdx) => (
-                              <a key={urlIdx} href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center px-3 py-1 bg-white text-blue-600 text-xs rounded-lg hover:bg-blue-50 border border-blue-200">
-                                <Download className="w-3 h-3 mr-1" />File {urlIdx + 1}
+                            {result.azure_blob.urls.map((file, urlIdx) => (
+                              <a key={urlIdx} href={file.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center px-3 py-1.5 bg-white text-blue-600 text-xs rounded-lg hover:bg-blue-50 border border-blue-200 font-medium">
+                                <Download className="w-3 h-3 mr-1.5" />{file.name}
                               </a>
                             ))}
                           </div>
                         </div>
                       )}
                       <div className="mt-3 pt-3 border-t border-emerald-200">
-                        <p className="text-xs text-slate-500">Uploaded to SharePoint ✓ | WordPress ✓</p>
+                        <p className="text-xs text-slate-500">
+                          SharePoint: {result.sharepoint?.uploaded ? '✓' : '✗'} |
+                          WordPress: {result.wordpress?.uploaded ? '✓' : '✗'} |
+                          Azure: {result.azure_blob?.uploaded ? '✓' : '✗'}
+                        </p>
                       </div>
                     </div>
                   ))}
@@ -373,7 +464,7 @@ const App: React.FC = () => {
       </main>
 
       <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-center text-sm text-slate-500">
-        <p>Files are processed securely and stored for 6 hours before automatic deletion</p>
+        <p>Files are processed securely and stored for 24 hours before automatic deletion</p>
       </footer>
     </div>
   );
