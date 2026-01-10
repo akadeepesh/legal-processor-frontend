@@ -46,12 +46,11 @@ interface ProcessingResult {
   error?: string;
 }
 
-// CORRECTED ORDER: Azure upload is FIRST (happens in /upload endpoint)
 const PROCESSING_STEPS = [
   { key: 'azure_upload', label: 'Azure Upload (Original PDF)', icon: Cloud },
   { key: 'initialization', label: 'Initialization', icon: Zap },
   { key: 'extraction', label: 'Text Extraction', icon: FileText },
-  { key: 'ai_conversion', label: 'AI Conversion (30min-2hrs)', icon: Zap },
+  { key: 'ai_conversion', label: 'AI Conversion (Upto 24 hrs)', icon: Zap },
   { key: 'docx_creation', label: 'DOCX Creation', icon: FileText },
   { key: 'azure_docx_upload', label: 'Azure Upload (DOCX)', icon: Cloud },
   { key: 'sharepoint_upload', label: 'SharePoint Upload', icon: Database },
@@ -311,7 +310,7 @@ const App: React.FC = () => {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-slate-900">LegalProcessor</h1>
-              <p className="text-slate-600">Convert legal documents to plain English</p>
+              <p className="text-slate-600">Convert legal documents to plain English and Bullet points</p>
             </div>
           </div>
         </div>
